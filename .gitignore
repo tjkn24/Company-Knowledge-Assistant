@@ -1,2 +1,10 @@
 # Local environment variables
 .env
+
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# macOS system files
+.DS_Store
