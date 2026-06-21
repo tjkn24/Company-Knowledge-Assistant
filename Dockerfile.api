@@ -1,0 +1,46 @@
+# Dockerfile.api — FastAPI Backend Container
+# =============================================
+# Multi-stage build: smaller final image, faster deploys.
+#
+# STAGE 1 (builder): Install Python dependencies
+# STAGE 2 (runtime): Copy only what's needed — no build tools in production
+#
+# Build: docker build -f Dockerfile.api -t agent-api .
+# Run:   docker run -p 8000:8000 --env-file .env agent-api
+
+# ── Stage 1: Install dependencies ────────────────────────────────────────
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+
+# Copy only requirements first — Docker caches this layer
+# If requirements.txt hasn't changed, pip install is skipped on rebuild
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+
+# ── Stage 2: Runtime image ────────────────────────────────────────────────
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Copy installed packages from builder stage
+COPY --from=builder /root/.local /root/.local
+
+# Copy application code
+COPY . .
+
+# Create the data directory for SQLite
+RUN mkdir -p /data
+
+# Make sure scripts installed by pip are available in PATH
+ENV PATH=/root/.local/bin:$PATH
+
+# Expose FastAPI port
+EXPOSE 8000
+
+# Run the FastAPI server
+# --host 0.0.0.0 = listen on all network interfaces (required in Docker)
+# --workers 1    = single worker for SQLite (use postgres + multiple workers in prod)
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

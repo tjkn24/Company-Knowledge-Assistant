@@ -1,0 +1,210 @@
+# docker-compose.yml — Agent Platform
+# ======================================
+#
+# SERVICES AND THEIR ROLES:
+#
+#   agent      (port 8000) — FastAPI: AI brain, security, all business logic
+#   ops_ui     (port 8501) — Streamlit: operator dashboard (NOT user-facing)
+#   ollama     (port 11434)— Local AI model server
+#   n8n        (port 5678) — Traffic manager: routes from any channel to agent
+#   prometheus (port 9090) — Metrics collector
+#   grafana    (port 3000) — Monitoring dashboards
+#
+# USER INTERACTION MODEL:
+#   Users → Telegram / WhatsApp / Slack
+#              ↓ (webhooks)
+#           agent (FastAPI)
+#              ↓
+#           LangGraph agent
+#              ↓ reply
+#           back to same channel
+#
+# n8n ROLE:
+#   Any external trigger (Telegram, CRM, schedule, webhook)
+#              ↓
+#           n8n workflow
+#              ↓ POST /n8n/trigger
+#           agent (FastAPI)
+#              ↓ JSON reply
+#           n8n sends reply to original channel
+#
+# QUICK START:
+#   cp .env.example .env      # add your tokens
+#   docker compose up -d      # start all services
+#   docker compose exec ollama ollama pull mistral  # download AI model (once)
+#
+# AFTER STARTING:
+#   Register webhooks at http://localhost:8501 → Channel Setup
+#   Or: POST http://localhost:8000/webhooks/telegram/setup
+
+version: "3.9"
+
+volumes:
+  n8n_data:
+  grafana_data:
+  prometheus_data:
+  ollama_models:
+  app_data:
+
+networks:
+  platform:
+    driver: bridge
+
+services:
+
+  # ── FastAPI Agent Backend ──────────────────────────────────────────────────
+  agent:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.agent
+    container_name: agent
+    networks: [platform]
+    ports:
+      - "8000:8000"
+    volumes:
+      - app_data:/app/data       # SQLite DB + FAISS index
+      - ./docs:/app/docs:ro      # knowledge base (read-only)
+    env_file: .env
+    environment:
+      DATABASE_URL: "sqlite+aiosqlite:////app/data/agent.db"
+      OLLAMA_BASE_URL: "http://ollama:11434"
+    depends_on:
+      ollama:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+
+  # ── Streamlit Ops Dashboard (NOT user-facing) ──────────────────────────────
+  # Users interact via Telegram/WhatsApp/Slack, NOT this dashboard.
+  # This is for the operator to monitor the system.
+  ops_ui:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ui
+    container_name: ops_ui
+    networks: [platform]
+    ports:
+      - "8501:8501"
+    environment:
+      API_BASE: "http://agent:8000"
+    depends_on:
+      - agent
+    restart: unless-stopped
+
+  # ── Ollama — Local AI Model Server ────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    networks: [platform]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    # Uncomment for NVIDIA GPU acceleration:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # ── MCP Server — exposes agent tools over Model Context Protocol ──────────
+  # Runs as a stable Docker service (streamable-HTTP) instead of a local
+  # stdio process, so it survives client restarts and is debuggable with
+  # `docker compose logs mcp_server` like every other service.
+  mcp_server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.mcp
+    container_name: mcp_server
+    networks: [platform]
+    ports:
+      - "8800:8800"
+    volumes:
+      - app_data:/app/data       # shares the FAISS index with `agent`
+      - ./docs:/app/docs:ro      # knowledge base (read-only)
+    env_file: .env
+    environment:
+      DATABASE_URL: "sqlite+aiosqlite:////app/data/agent.db"
+      OLLAMA_BASE_URL: "http://ollama:11434"
+      MCP_TRANSPORT: "streamable-http"
+      MCP_HOST: "0.0.0.0"
+      MCP_PORT: "8800"
+    depends_on:
+      ollama:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8800/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ── n8n — Traffic Manager ─────────────────────────────────────────────────
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    networks: [platform]
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n_workflows:/home/node/n8n_exports:ro
+    environment:
+      N8N_HOST: "0.0.0.0"
+      N8N_PORT: "5678"
+      WEBHOOK_URL: "${N8N_WEBHOOK_URL:-http://localhost:5678/}"
+      GENERIC_TIMEZONE: "Asia/Jakarta"
+      # The shared secret n8n uses when calling the agent
+      N8N_AGENT_SECRET: "${N8N_WEBHOOK_SECRET:-}"
+      N8N_BASIC_AUTH_ACTIVE: "false"
+      # Persist encryption key across restarts
+      N8N_ENCRYPTION_KEY: "${N8N_ENCRYPTION_KEY:-changeme-generate-random}"
+    restart: unless-stopped
+
+  # ── Prometheus ────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    networks: [platform]
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+    restart: unless-stopped
+
+  # ── Grafana ───────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    networks: [platform]
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./docker/grafana_datasource.yml:/etc/grafana/provisioning/datasources/prometheus.yml:ro
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_PASSWORD:-admin}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: "http://localhost:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped

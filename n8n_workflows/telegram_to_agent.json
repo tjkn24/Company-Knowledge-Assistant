@@ -1,0 +1,57 @@
+{
+  "name": "Telegram → Agent Platform",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": ["message"],
+        "additionalFields": {}
+      },
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://agent:8000/n8n/trigger",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "X-N8N-Secret", "value": "={{$env.N8N_AGENT_SECRET}}"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {"name": "message",  "value": "={{$json.message.text}}"},
+            {"name": "source",   "value": "telegram"},
+            {"name": "user_id",  "value": "={{$json.message.chat.id}}"},
+            {"name": "workflow", "value": "general"}
+          ]
+        }
+      },
+      "name": "Call Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "chatId": "={{$('Telegram Trigger').item.json.message.chat.id}}",
+        "text": "={{$json.answer}}",
+        "additionalFields": {"parse_mode": "Markdown"}
+      },
+      "name": "Send Telegram Reply",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [680, 300]
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {"main": [[{"node": "Call Agent", "type": "main", "index": 0}]]},
+    "Call Agent": {"main": [[{"node": "Send Telegram Reply", "type": "main", "index": 0}]]}
+  }
+}

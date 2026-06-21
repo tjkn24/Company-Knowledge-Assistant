@@ -1,0 +1,20 @@
+================================================================================
+DOCUMENT: AcmeSoft Product FAQ
+SOURCE: product_faq.txt
+================================================================================
+
+Q: What are the pricing plans?
+A: Starter: Free, up to 3 users. Pro: $12/user/month, SSO. Enterprise: custom pricing.
+
+Q: What security certifications does AcmeSoft hold?
+A: SOC 2 Type II certified, ISO 27001 compliant. AES-256 at rest, TLS 1.3 in transit.
+
+Q: What is the SLA for Enterprise customers?
+A: 99.9% uptime. Critical incidents acknowledged in 15 minutes, resolved in 4 hours.
+
+Q: What integrations are supported?
+A: GitHub, GitLab, Jira, Slack, Microsoft Teams, Zoom, Google Workspace, Zapier.
+   REST API and webhooks available for custom integrations.
+
+Q: What are the API rate limits?
+A: Starter: 100 req/min. Pro: 500 req/min. Enterprise: 2,000 req/min (configurable).

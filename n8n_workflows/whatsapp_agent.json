@@ -1,0 +1,99 @@
+{
+  "name": "WhatsApp → Agent → Reply",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp-inbound",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wa-trigger",
+      "name": "WhatsApp Webhook (Twilio)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "notes": "Twilio sends WhatsApp messages here as form-encoded POST.\nSet this URL in Twilio Console → Messaging → WhatsApp Sandbox.\nTwilio field names: Body (text), From (sender number), To (your number)"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Twilio sends form data, n8n parses it into JSON automatically\nconst body   = $input.item.json.body;\nconst text   = (body.Body || '').trim();\nconst sender = body.From || '';  // 'whatsapp:+628123456789'\n\nif (!text) return [];\n\nreturn [{ json: { text, sender, channel: 'whatsapp' } }];"
+      },
+      "id": "wa-extract",
+      "name": "Extract WhatsApp Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://agent-api:8000/n8n/ingest",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "X-N8n-Secret", "value": "={{ $env.N8N_WEBHOOK_SECRET || 'n8n-secret-change-this' }}"}
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {"name": "message",   "value": "={{ $json.text }}"},
+            {"name": "channel",   "value": "whatsapp"},
+            {"name": "sender_id", "value": "={{ $json.sender }}"},
+            {"name": "workflow",  "value": "general"}
+          ]
+        },
+        "options": {"timeout": 120000}
+      },
+      "id": "wa-agent",
+      "name": "Call Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.twilio.com/2010-04-01/Accounts/{{ $env.TWILIO_ACCOUNT_SID }}/Messages.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {"name": "From", "value": "={{ $env.TWILIO_WHATSAPP_FROM || 'whatsapp:+14155238886' }}"},
+            {"name": "To",   "value": "={{ $('Extract WhatsApp Message').item.json.sender }}"},
+            {"name": "Body", "value": "={{ $json.answer || 'Sorry, something went wrong.' }}"}
+          ]
+        }
+      },
+      "id": "wa-reply",
+      "name": "Send WhatsApp Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 300],
+      "notes": "Uses HTTP Basic Auth: Twilio Account SID as username, Auth Token as password.\nSet credentials in n8n Credentials → HTTP Basic Auth."
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>",
+        "options": {"responseHeaders": {"entries": [{"name": "Content-Type", "value": "text/xml"}]}}
+      },
+      "id": "wa-ack",
+      "name": "Acknowledge Twilio",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1120, 300],
+      "notes": "Twilio expects a TwiML XML response. Empty <Response/> means no auto-reply (we already sent one)."
+    }
+  ],
+  "connections": {
+    "WhatsApp Webhook (Twilio)":  {"main": [[{"node": "Extract WhatsApp Message", "type": "main", "index": 0}]]},
+    "Extract WhatsApp Message":   {"main": [[{"node": "Call Agent",               "type": "main", "index": 0}]]},
+    "Call Agent":                 {"main": [[{"node": "Send WhatsApp Reply",       "type": "main", "index": 0}]]},
+    "Send WhatsApp Reply":        {"main": [[{"node": "Acknowledge Twilio",        "type": "main", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"}
+}

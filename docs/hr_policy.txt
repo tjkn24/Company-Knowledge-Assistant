@@ -1,0 +1,32 @@
+================================================================================
+DOCUMENT: Company HR Policy — Leave & Benefits
+SOURCE: hr_policy.txt
+================================================================================
+
+Annual Leave
+------------
+All full-time employees are entitled to 20 days of paid annual leave per calendar
+year. Leave accrues at a rate of 1.67 days per month. Unused leave of up to 10
+days may be carried over to the following year.
+
+Sick Leave
+----------
+Employees are entitled to 12 days of paid sick leave per year. A medical
+certificate is required for absences exceeding 2 consecutive days.
+
+Parental Leave
+--------------
+Primary caregivers receive 16 weeks of fully paid parental leave.
+Secondary caregivers receive 4 weeks of fully paid parental leave.
+Leave must be taken within 12 months of the child's birth or adoption.
+
+Remote Work Policy
+------------------
+Employees may work remotely up to 3 days per week with manager approval.
+Fully remote arrangements require VP-level sign-off and a quarterly review.
+All remote workers must be available during core hours (10am-3pm local time).
+
+Health Benefits
+---------------
+The company covers 80% of the employee's health insurance premium and 50% of
+dependent premiums. Open enrollment is held each November.

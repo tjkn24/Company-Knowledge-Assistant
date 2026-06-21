@@ -1,0 +1,102 @@
+{
+  "name": "Telegram → Agent → Reply",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "telegram-inbound",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "telegram-trigger",
+      "name": "Telegram Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "notes": "STEP 1 — Telegram sends every user message here.\nSet this URL in your Telegram bot webhook:\n  POST https://api.telegram.org/bot<TOKEN>/setWebhook?url=<N8N_URL>/webhook/telegram-inbound"
+    },
+    {
+      "parameters": {
+        "jsCode": "// STEP 2 — Extract message text and chat ID from Telegram's payload\n// Telegram sends updates in this shape:\n// { update_id: 123, message: { text: '...', chat: { id: 456 }, from: { username: 'tj' } } }\n\nconst update   = $input.item.json.body;\nconst message  = update.message || update.edited_message;\n\nif (!message || !message.text) {\n  // Not a text message (could be photo, sticker, etc.) — skip\n  return [];\n}\n\nreturn [{\n  json: {\n    text:     message.text.trim(),\n    chat_id:  String(message.chat.id),\n    username: message.from?.username || message.from?.first_name || `tg_${message.chat.id}`,\n    // Determine workflow from message keywords\n    workflow: message.text.toLowerCase().includes('weather') ? 'weather_report'\n            : message.text.toLowerCase().includes('ticket') ? 'jira_triage'\n            : 'general',\n  }\n}];"
+      },
+      "id": "extract-message",
+      "name": "Extract & Route",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "notes": "STEP 2 — Parse the Telegram payload and decide which workflow to use.\nKeyword routing example:\n  'weather in Jakarta' → weather_report workflow\n  'create ticket for...' → jira_triage workflow\n  Everything else → general workflow"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://agent-api:8000/n8n/ingest",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "X-N8n-Secret", "value": "={{ $env.N8N_WEBHOOK_SECRET || 'n8n-secret-change-this' }}"},
+            {"name": "Content-Type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {"name": "message",   "value": "={{ $json.text }}"},
+            {"name": "channel",   "value": "telegram"},
+            {"name": "sender_id", "value": "={{ $json.chat_id }}"},
+            {"name": "workflow",  "value": "={{ $json.workflow }}"}
+          ]
+        },
+        "options": {"timeout": 120000}
+      },
+      "id": "call-agent",
+      "name": "Call Agent API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300],
+      "notes": "STEP 3 — Send the message to the FastAPI agent.\nThe agent processes it through the full security pipeline\nand returns a JSON response with the answer."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {"name": "chat_id",    "value": "={{ $('Extract & Route').item.json.chat_id }}"},
+            {"name": "text",       "value": "={{ $json.answer || $json.error || 'Sorry, something went wrong.' }}"},
+            {"name": "parse_mode", "value": "Markdown"}
+          ]
+        },
+        "options": {"timeout": 10000}
+      },
+      "id": "send-reply",
+      "name": "Send Telegram Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 300],
+      "notes": "STEP 4 — Send the agent's answer back to the Telegram user.\nThe chat_id from step 2 tells Telegram which conversation to reply to."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"ok\": true}",
+        "options": {}
+      },
+      "id": "respond-telegram",
+      "name": "Respond to Telegram",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1120, 300],
+      "notes": "STEP 5 — Respond 200 OK to Telegram's webhook POST.\nTelegram requires a fast 200 response or it will retry the message.\nWe respond immediately; the actual reply is sent in step 4."
+    }
+  ],
+  "connections": {
+    "Telegram Webhook Trigger": {"main": [[{"node": "Extract & Route",      "type": "main", "index": 0}]]},
+    "Extract & Route":          {"main": [[{"node": "Call Agent API",        "type": "main", "index": 0}]]},
+    "Call Agent API":           {"main": [[{"node": "Send Telegram Reply",   "type": "main", "index": 0}]]},
+    "Send Telegram Reply":      {"main": [[{"node": "Respond to Telegram",   "type": "main", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"}
+}
